@@ -1,20 +1,26 @@
+const fs = require("fs");
+const util = require("util");
+const yaml = require("js-yaml");
+
+const writeFile = util.promisify(fs.writeFile);
+
 const TornadoCash = artifacts.require("TornadoCash");
 
 async function run() {
   const contractData = [{
-    amount: 1,
+    amount: 0.1,
     address: "0x12D66f87A04A9E220743712cE6d9bB1B5616B8Fc",
     startBlock: 9116966
   }, {
-    amount: 10,
+    amount: 1,
     address: "0x47CE0C6eD5B0Ce3d3A51fdb1C52DC66a7c3c2936",
     startBlock: 9117609
   }, {
-    amount: 100,
+    amount: 10,
     address: "0x910Cbd523D972eb0a6f4cAe4618aD62622b39DbF",
     startBlock: 9117720
   }, {
-    amount: 1000,
+    amount: 100,
     address: "0xA160cdAB225685dA1d56aa342Ad8841c3b53f291",
     startBlock: 9161895
   }];
@@ -26,14 +32,12 @@ async function run() {
   }
   */
   const accounts = {};
+  const intervals = [];
 
   for (const data of contractData) {
     const contract = await TornadoCash.at(data.address);
     const deposits = await contract.getPastEvents("Deposit", { fromBlock: data.startBlock });
     const withdrawals = await contract.getPastEvents("Withdrawal", { fromBlock: data.startBlock });
-    console.log("amount:", data.amount);
-    console.log("deposits:", deposits.length);
-    console.log("withdrawals:", withdrawals.length);
 
     // Track amount deposited and withdrawn for each unique address
     await countTxs(accounts, deposits, "deposit", data.amount);
@@ -55,21 +59,39 @@ async function run() {
     });
 
     interval.sort((a, b) => (a - b));
-    console.log(interval);
+    await writeFile(`data/interval-${data.amount}.yml`, yaml.safeDump(interval));
+
     const medianInterval = interval[Math.floor(interval.length / 2)];
 
-    console.log("expected:", expectedInterval);
-    console.log("median:", medianInterval);
-    console.log("# accounts:", Object.keys(accounts).length);
+    intervals.push({
+      amount: data.amount,
+      expected: expectedInterval,
+      median: medianInterval
+    });
   }
 
-  const accounts_sorted = Object.keys(accounts).map(address =>
-    [address, accounts[address].deposit, accounts[address].withdrawal]
-  );
+  await writeFile('data/intervals.yml', yaml.safeDump(intervals));
 
-  accounts_sorted.sort((a, b) => (a[1] + a[2]) - (b[1] + b[2]));
+  // Convert denomination back to ETH
+  Object.keys(accounts).forEach(address => {
+    const account = accounts[address];
+    account.deposit = accounts[address].deposit / 10;
+    account.withdrawal = accounts[address].withdrawal / 10;
+  });
 
-  // accounts_sorted.forEach(data => console.log(data[0], data[1], data[2]));
+  // Sort unique addresses by (deposit + withdrawal)
+  await writeFile('data/accounts.yml', yaml.safeDump(accounts, {
+    sortKeys: (a, b) => {
+      // sortKeys attempts to sort nested objects as well.
+      // Handle these as a special case.
+      if (a == "deposit") return -1;
+      if (b == "deposit") return 1;
+
+      a = accounts[a];
+      b = accounts[b];
+      return a.deposit + a.withdrawal - (b.deposit + b.withdrawal);
+    }
+  }));
 }
 
 async function countTxs(accounts, events, type, amount) {
@@ -79,7 +101,8 @@ async function countTxs(accounts, events, type, amount) {
       accounts[tx.from] = { deposit: 0, withdrawal: 0 };
     }
 
-    accounts[tx.from][type] += amount;
+    // Note: Track amount as (ETH * 10) b/c Javascript numbers can't express decimals precisely
+    accounts[tx.from][type] += amount * 10;
   }
 }
 

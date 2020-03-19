@@ -9,6 +9,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "truffle": "^5.1.17"
+    "js-yaml": "^3.13.1",
+    "truffle": "^5.1.17",
+    "web3": "^1.2.6"
   }
 }
